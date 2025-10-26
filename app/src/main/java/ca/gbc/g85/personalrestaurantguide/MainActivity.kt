@@ -889,3 +889,91 @@ fun DetailRow(label: String, value: String) {
         )
     }
 }
+
+// ==================== MAP SCREEN ====================
+    /**
+     * Map screen showing restaurant coordinates
+     * @author Jerry-Lee Somera
+     */
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun MapScreen(
+        r: Restaurant,
+        onBack: () -> Unit,
+        onOpenMaps: () -> Unit,
+        onDirections: () -> Unit
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Map – ${r.name}") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, "Back")
+                        }
+                    }
+                )
+            }
+        ) { p ->
+            Column(
+                Modifier
+                    .padding(p)
+                    .fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(24.dp))
+                Surface(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp),
+                    tonalElevation = 4.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "🗺",
+                                style = MaterialTheme.typography.displayMedium
+                            )
+                            Text(
+                                "Map View",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Lat: ${String.format("%.4f", r.lat)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "Lng: ${String.format("%.4f", r.lng)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onOpenMaps,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Open in Maps") }
+                    Button(
+                        onClick = onDirections,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Get Directions") }
+                }
+            }
+        }
+    }
+}
