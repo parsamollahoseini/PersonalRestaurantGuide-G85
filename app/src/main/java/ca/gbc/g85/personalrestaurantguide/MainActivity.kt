@@ -18,6 +18,18 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import kotlin.math.round
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 
 
 // ==================== DATA MODEL ====================
@@ -97,48 +109,91 @@ private fun isValidLongitude(lng: Double): Boolean = lng in -180.0..180.0
 
 // ==================== MAIN ACTIVITY ====================
 /**
- * Main Activity - Entry point
- * Navigation and screens will be added by team members
- * @author Parsa Molahosseini
+ * Main Activity with Navigation setup
+ * @author Mehrad Bayat
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             PersonalRestaurantGuideTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    // Placeholder - team will add navigation here
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Text(
-                                "🍽️",
-                                style = MaterialTheme.typography.displayLarge
-                            )
-                            Text(
-                                "Personal Restaurant Guide",
-                                style = MaterialTheme.typography.headlineMedium
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Text("Group G-85")
-                            Text("Data Model: Ready ✅")
-                            Text("ViewModel: Ready ✅")
-                            Text("Validation: Ready ✅")
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Waiting for team to add screens...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                val nav = rememberNavController()
+                val vm: RestaurantVm = viewModel()
+
+                NavHost(navController = nav, startDestination = "splash") {
+
+                    composable("splash") {
+                        SplashScreen {
+                            nav.navigate("home") { popUpTo("splash") { inclusive = true } }
+                        }
+                    }
+
+                    composable("home") {
+                        HomeScreen(
+                            items = vm.items,
+                            onOpen = { nav.navigate("details/${it.id}") },
+                            onAdd = { nav.navigate("addEdit/0") },
+                            onAbout = { nav.navigate("about") }
+                        )
+                    }
+
+                    composable("about") {
+                        AboutScreen(
+                            onBack = { nav.popBackStack() }
+                        )
+                    }
+
+                    composable(
+                        "details/{id}",
+                        arguments = listOf(navArgument("id"){ type = NavType.LongType })
+                    ) { backStackEntry ->
+                        val id = backStackEntry.arguments!!.getLong("id")
+                        val r by remember { derivedStateOf { vm.byId(id) } }
+
+                        if (r == null) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        } else {
+                            DetailsScreen(
+                                r = r!!,
+                                onBack = {
+                                    nav.navigate("home") {
+                                        popUpTo("home") { inclusive = true }
+                                    }
+                                },
+                                onEdit = { nav.navigate("addEdit/${r!!.id}") },
+                                onDelete = {
+                                    val restaurantId = r!!.id
+                                    vm.remove(restaurantId)
+                                    nav.navigate("home") {
+                                        popUpTo("home") { inclusive = true }
+                                    }
+                                }
                             )
                         }
+                    }
+
+                    composable(
+                        "addEdit/{id}",
+                        arguments = listOf(navArgument("id"){ type = NavType.LongType })
+                    ) {
+                        val id = it.arguments!!.getLong("id")
+                        val existing = vm.items.find { it.id == id }
+                        AddEditScreen(
+                            initial = existing,
+                            onBack = { nav.popBackStack() },
+                            onSave = { saved ->
+                                vm.addOrUpdate(
+                                    saved.copy(
+                                        id = if (saved.id == 0L)
+                                            (round(Math.random() * 1_000_000)).toLong()
+                                        else saved.id
+                                    )
+                                )
+                                nav.popBackStack()
+                            }
+                        )
                     }
                 }
             }
@@ -448,4 +503,299 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+}
+
+// ==================== SPLASH SCREEN ====================
+/**
+ * Splash screen with auto-navigation
+ * @author Mehrad Bayat
+ */
+@Composable
+fun SplashScreen(onDone: () -> Unit) {
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(1500)
+        onDone()
+    }
+    Box(
+        Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                "🍽️",
+                style = MaterialTheme.typography.displayLarge
+            )
+            Text(
+                "Personal Restaurant Guide",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+// ==================== HOME SCREEN ====================
+/**
+ * Main home screen with restaurant list and search
+ * @author Mehrad Bayat
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    items: List<Restaurant>,
+    onOpen: (Restaurant) -> Unit,
+    onAdd: () -> Unit,
+    onAbout: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+
+    val filtered = remember(items, query) {
+        if (query.isBlank()) items
+        else items.filter {
+            val s = query.trim().lowercase()
+            it.name.lowercase().contains(s) ||
+                    it.tags.lowercase().contains(s) ||
+                    it.address.lowercase().contains(s)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Restaurants (${items.size})") },
+                actions = {
+                    TextButton(onClick = onAbout) { Text("About") }
+                }
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onAdd) {
+                Text("+", style = MaterialTheme.typography.headlineMedium)
+            }
+        }
+    ) { paddingValues ->
+        Column(Modifier.padding(paddingValues)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = { Text("Search by name, tag, or address") },
+                singleLine = true,
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+            )
+
+            if (filtered.isEmpty() && query.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "🔍",
+                            style = MaterialTheme.typography.displayMedium
+                        )
+                        Text(
+                            "No restaurants found",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Try a different search term",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            "🍽️",
+                            style = MaterialTheme.typography.displayLarge
+                        )
+                        Text(
+                            "No restaurants yet",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Tap the + button to add your first restaurant",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else {
+                LazyColumn {
+                    items(filtered, key = { it.id }) { restaurant ->
+                        ListItem(
+                            headlineContent = {
+                                Text(restaurant.name, fontWeight = FontWeight.SemiBold)
+                            },
+                            supportingContent = {
+                                Text("${restaurant.tags} · ${"★".repeat(restaurant.rating)}")
+                            },
+                            overlineContent = { Text(restaurant.address) },
+                            modifier = Modifier.clickable { onOpen(restaurant) }
+                        )
+                        HorizontalDivider()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==================== DETAILS SCREEN ====================
+/**
+ * Restaurant details screen with actions
+ * @author Mehrad Bayat
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DetailsScreen(
+    r: Restaurant,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(r.name) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showDeleteDialog = true }) {
+                        Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            )
+        }
+    ) { p ->
+        Column(
+            Modifier
+                .padding(p)
+                .padding(16.dp)
+                .fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        "Rating",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        "★".repeat(r.rating) + "☆".repeat(5 - r.rating),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    DetailRow("📍 Address", r.address)
+                    DetailRow("📞 Phone", r.phone)
+                    DetailRow("🏷️ Tags", r.tags)
+                    if (r.description.isNotBlank()) {
+                        DetailRow("📝 Description", r.description)
+                    }
+                    DetailRow("🗺️ Coordinates", "${String.format("%.4f", r.lat)}, ${String.format("%.4f", r.lng)}")
+                }
+            }
+
+            Text(
+                "Actions",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            FilledTonalButton(
+                onClick = onEdit,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Edit Restaurant") }
+        }
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete Restaurant?") },
+            text = { Text("Are you sure you want to delete ${r.name}? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteDialog = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Helper composable for displaying detail rows
+ * @author Mehrad Bayat
+ */
+@Composable
+fun DetailRow(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyLarge
+        )
+    }
 }
