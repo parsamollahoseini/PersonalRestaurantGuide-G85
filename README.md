@@ -1,14 +1,4 @@
-✅ Good Progress! Now Create README and Finish
-You're doing great! You need to:
 
-Create the README.md file
-Add .idea files
-Push to GitHub
-
-
-📝 Step 1: Create README.md
-bash# Create README.md in your project root
-cat > README.md << 'EOF'
 # Personal Restaurant Guide 🍽️
 
 ## Group G-85
