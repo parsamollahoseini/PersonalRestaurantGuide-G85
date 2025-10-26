@@ -30,6 +30,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Map
 
 
 // ==================== DATA MODEL ====================
@@ -106,6 +110,37 @@ private fun isValidLatitude(lat: Double): Boolean = lat in -90.0..90.0
  * @author Parsa Molahosseini
  */
 private fun isValidLongitude(lng: Double): Boolean = lng in -180.0..180.0
+
+// ==================== ANDROID INTENTS ====================
+/**
+ * Share restaurant information via Android share sheet
+ * @author Jerry-Lee Somera
+ */
+private fun shareRestaurant(ctx: ComponentActivity, r: Restaurant) {
+    val text = """
+        ${r.name}
+        ${"★".repeat(r.rating)} | Tags: ${r.tags}
+        ${r.address} | ${r.phone}
+        https://maps.google.com/?q=${Uri.encode(r.name)}@${r.lat},${r.lng}
+    """.trimIndent()
+    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }, "Share restaurant"))
+}
+
+/**
+ * Open Google Maps with restaurant location
+ * @param nav If true, opens navigation mode; if false, opens view mode
+ * @author Jerry-Lee Somera
+ */
+private fun openMap(ctx: ComponentActivity, r: Restaurant, nav: Boolean) {
+    val uri = if (nav)
+        "google.navigation:q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
+    else
+        "geo:${r.lat},${r.lng}?q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
+    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+}
 
 // ==================== MAIN ACTIVITY ====================
 /**
