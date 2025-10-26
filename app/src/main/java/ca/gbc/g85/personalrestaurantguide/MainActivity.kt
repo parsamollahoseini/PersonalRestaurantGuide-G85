@@ -30,6 +30,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Map
 
 
 // ==================== DATA MODEL ====================
@@ -107,6 +111,37 @@ private fun isValidLatitude(lat: Double): Boolean = lat in -90.0..90.0
  */
 private fun isValidLongitude(lng: Double): Boolean = lng in -180.0..180.0
 
+// ==================== ANDROID INTENTS ====================
+/**
+ * Share restaurant information via Android share sheet
+ * @author Jerry-Lee Somera
+ */
+private fun shareRestaurant(ctx: ComponentActivity, r: Restaurant) {
+    val text = """
+        ${r.name}
+        ${"★".repeat(r.rating)} | Tags: ${r.tags}
+        ${r.address} | ${r.phone}
+        https://maps.google.com/?q=${Uri.encode(r.name)}@${r.lat},${r.lng}
+    """.trimIndent()
+    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }, "Share restaurant"))
+}
+
+/**
+ * Open Google Maps with restaurant location
+ * @param nav If true, opens navigation mode; if false, opens view mode
+ * @author Jerry-Lee Somera
+ */
+private fun openMap(ctx: ComponentActivity, r: Restaurant, nav: Boolean) {
+    val uri = if (nav)
+        "google.navigation:q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
+    else
+        "geo:${r.lat},${r.lng}?q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
+    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+}
+
 // ==================== MAIN ACTIVITY ====================
 /**
  * Main Activity with Navigation setup
@@ -162,6 +197,9 @@ class MainActivity : ComponentActivity() {
                                         popUpTo("home") { inclusive = true }
                                     }
                                 },
+                                onMap = { openMap(this@MainActivity, r!!, nav = false) },
+                                onDirections = { openMap(this@MainActivity, r!!, nav = true) },
+                                onShare = { shareRestaurant(this@MainActivity, r!!) },
                                 onEdit = { nav.navigate("addEdit/${r!!.id}") },
                                 onDelete = {
                                     val restaurantId = r!!.id
@@ -172,9 +210,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
-                    }
 
-                    composable(
+
+                        composable(
                         "addEdit/{id}",
                         arguments = listOf(navArgument("id"){ type = NavType.LongType })
                     ) {
@@ -195,7 +233,31 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
-                }
+                        composable(
+                            "map/{id}",
+                            arguments = listOf(navArgument("id"){ type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val id = backStackEntry.arguments!!.getLong("id")
+                            val r by remember { derivedStateOf { vm.byId(id) } }
+
+                            if (r == null) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            } else {
+                                MapScreen(
+                                    r = r!!,
+                                    onBack = {
+                                        nav.navigate("home") {
+                                            popUpTo("home") { inclusive = true }
+                                        }
+                                    },
+                                    onOpenMaps = { openMap(this@MainActivity, r!!, nav = false) },
+                                    onDirections = { openMap(this@MainActivity, r!!, nav = true) }
+                                )
+                            }
+                        }
+                    }
             }
         }
     }
@@ -682,9 +744,13 @@ fun HomeScreen(
 fun DetailsScreen(
     r: Restaurant,
     onBack: () -> Unit,
+    onMap: () -> Unit,
+    onDirections: () -> Unit,
+    onShare: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -749,10 +815,34 @@ fun DetailsScreen(
                 fontWeight = FontWeight.SemiBold
             )
 
-            FilledTonalButton(
-                onClick = onEdit,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Edit Restaurant") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onMap,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Map") }
+                Button(
+                    onClick = onDirections,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Directions") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onShare,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Share") }
+                FilledTonalButton(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Edit") }
+            }
+
         }
     }
 
@@ -797,5 +887,93 @@ fun DetailRow(label: String, value: String) {
             value,
             style = MaterialTheme.typography.bodyLarge
         )
+    }
+}
+
+// ==================== MAP SCREEN ====================
+    /**
+     * Map screen showing restaurant coordinates
+     * @author Jerry-Lee Somera
+     */
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun MapScreen(
+        r: Restaurant,
+        onBack: () -> Unit,
+        onOpenMaps: () -> Unit,
+        onDirections: () -> Unit
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Map – ${r.name}") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, "Back")
+                        }
+                    }
+                )
+            }
+        ) { p ->
+            Column(
+                Modifier
+                    .padding(p)
+                    .fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(24.dp))
+                Surface(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp),
+                    tonalElevation = 4.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "🗺",
+                                style = MaterialTheme.typography.displayMedium
+                            )
+                            Text(
+                                "Map View",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Lat: ${String.format("%.4f", r.lat)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "Lng: ${String.format("%.4f", r.lng)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onOpenMaps,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Open in Maps") }
+                    Button(
+                        onClick = onDirections,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Get Directions") }
+                }
+            }
+        }
     }
 }
