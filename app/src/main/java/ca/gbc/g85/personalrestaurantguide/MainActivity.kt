@@ -197,6 +197,9 @@ class MainActivity : ComponentActivity() {
                                         popUpTo("home") { inclusive = true }
                                     }
                                 },
+                                onMap = { openMap(this@MainActivity, r!!, nav = false) },
+                                onDirections = { openMap(this@MainActivity, r!!, nav = true) },
+                                onShare = { shareRestaurant(this@MainActivity, r!!) },
                                 onEdit = { nav.navigate("addEdit/${r!!.id}") },
                                 onDelete = {
                                     val restaurantId = r!!.id
@@ -207,9 +210,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
-                    }
 
-                    composable(
+
+                        composable(
                         "addEdit/{id}",
                         arguments = listOf(navArgument("id"){ type = NavType.LongType })
                     ) {
@@ -230,7 +233,31 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
-                }
+                        composable(
+                            "map/{id}",
+                            arguments = listOf(navArgument("id"){ type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val id = backStackEntry.arguments!!.getLong("id")
+                            val r by remember { derivedStateOf { vm.byId(id) } }
+
+                            if (r == null) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            } else {
+                                MapScreen(
+                                    r = r!!,
+                                    onBack = {
+                                        nav.navigate("home") {
+                                            popUpTo("home") { inclusive = true }
+                                        }
+                                    },
+                                    onOpenMaps = { openMap(this@MainActivity, r!!, nav = false) },
+                                    onDirections = { openMap(this@MainActivity, r!!, nav = true) }
+                                )
+                            }
+                        }
+                    }
             }
         }
     }
@@ -717,9 +744,13 @@ fun HomeScreen(
 fun DetailsScreen(
     r: Restaurant,
     onBack: () -> Unit,
+    onMap: () -> Unit,
+    onDirections: () -> Unit,
+    onShare: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -784,10 +815,34 @@ fun DetailsScreen(
                 fontWeight = FontWeight.SemiBold
             )
 
-            FilledTonalButton(
-                onClick = onEdit,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Edit Restaurant") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onMap,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Map") }
+                Button(
+                    onClick = onDirections,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Directions") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onShare,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Share") }
+                FilledTonalButton(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Edit") }
+            }
+
         }
     }
 
