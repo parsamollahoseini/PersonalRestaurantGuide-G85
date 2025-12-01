@@ -9,246 +9,132 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.room.Room
+import ca.gbc.g85.personalrestaurantguide.data.AppDatabase
+import ca.gbc.g85.personalrestaurantguide.data.Restaurant
 import ca.gbc.g85.personalrestaurantguide.ui.theme.PersonalRestaurantGuideTheme
+import ca.gbc.g85.personalrestaurantguide.viewmodel.RestaurantVm
+import kotlinx.coroutines.delay
+import androidx.compose.material.icons.filled.Add
 
-// ==================== DATA MODEL ====================
-/**
- * Restaurant data model
- * @author Parsa Molahosseini
- */
-data class Restaurant(
-    val id: Long,
-    val name: String,
-    val address: String,
-    val phone: String,
-    val description: String,
-    val tags: String,
-    val rating: Int,
-    val lat: Double,
-    val lng: Double
-)
-
-/**
- * Sample restaurant data for testing
- * @author Parsa Molahosseini
- */
-private val sample = listOf(
-    Restaurant(1, "Sugo Pasta Bar", "760 College St, Toronto", "416-555-2345",
-        "Cozy Italian spot with homemade pasta", "italian,pasta", 5, 43.653, -79.383),
-    Restaurant(2, "Banh Mi Boys", "392 Queen St W, Toronto", "416-555-9123",
-        "Vietnamese fusion sandwiches", "asian,fastfood", 4, 43.647, -79.395),
-    Restaurant(3, "Seven Lives", "69 Kensington Ave, Toronto", "416-555-8888",
-        "Fresh tacos & seafood", "mexican,seafood", 5, 43.654, -79.400),
-)
-
-// ==================== VIEWMODEL ====================
-/**
- * ViewModel for managing restaurant data
- * Survives configuration changes and provides reactive state
- * @author Parsa Molahosseini
- */
-class RestaurantVm : ViewModel() {
-    private val _items = mutableStateListOf<Restaurant>().apply { addAll(sample) }
-    val items: List<Restaurant> get() = _items
-
-    fun byId(id: Long): Restaurant? = _items.firstOrNull { it.id == id }
-
-    fun addOrUpdate(r: Restaurant) {
-        val i = _items.indexOfFirst { it.id == r.id }
-        if (i >= 0) _items[i] = r else _items.add(0, r)
-    }
-
-    fun remove(id: Long) { _items.removeIf { it.id == id } }
-}
-
-// ==================== VALIDATION ====================
-/**
- * Validates phone number format
- * Accepts 10-11 digit numbers with optional formatting
- * @author Parsa Molahosseini
- */
-private fun isValidPhone(phone: String): Boolean {
-    val cleaned = phone.replace(Regex("[^0-9]"), "")
-    return cleaned.length in 10..11
-}
-
-/**
- * Validates latitude coordinate
- * Must be between -90 and 90 degrees
- * @author Parsa Molahosseini
- */
-private fun isValidLatitude(lat: Double): Boolean = lat in -90.0..90.0
-
-/**
- * Validates longitude coordinate
- * Must be between -180 and 180 degrees
- * @author Parsa Molahosseini
- */
-private fun isValidLongitude(lng: Double): Boolean = lng in -180.0..180.0
-
-// ==================== ANDROID INTENTS ====================
-/**
- * Share restaurant information via Android share sheet
- * @author Jerry-Lee Somera
- */
-private fun shareRestaurant(ctx: ComponentActivity, r: Restaurant) {
-    val text = """
-        ${r.name}
-        ${"★".repeat(r.rating)} | Tags: ${r.tags}
-        ${r.address} | ${r.phone}
-        https://maps.google.com/?q=${Uri.encode(r.name)}@${r.lat},${r.lng}
-    """.trimIndent()
-    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, text)
-    }, "Share restaurant"))
-}
-
-/**
- * Open Google Maps with restaurant location
- * @param nav If true, opens navigation mode; if false, opens view mode
- * @author Jerry-Lee Somera
- */
-private fun openMap(ctx: ComponentActivity, r: Restaurant, nav: Boolean) {
-    val uri = if (nav)
-        "google.navigation:q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
-    else
-        "geo:${r.lat},${r.lng}?q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
-    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
-}
-
-// ==================== MAIN ACTIVITY ====================
-/**
- * Main Activity with Navigation setup
- * @author Mehrad Bayat
- */
+// =====================================================
+// MAIN ACTIVITY – wires Room + ViewModel + Navigation
+// =====================================================
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Build Room database and ViewModel
+        val db = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java,
+            "restaurants.db"
+        ).build()
+        val vm = RestaurantVm(db.restaurantDao())
+
         setContent {
             PersonalRestaurantGuideTheme {
                 val nav = rememberNavController()
-                val vm: RestaurantVm = viewModel()
+                val items by vm.items.collectAsState()
 
                 NavHost(navController = nav, startDestination = "splash") {
 
                     composable("splash") {
                         SplashScreen {
-                            nav.navigate("home") { popUpTo("splash") { inclusive = true } }
+                            nav.navigate("home") {
+                                popUpTo("splash") { inclusive = true }
+                            }
                         }
                     }
 
                     composable("home") {
                         HomeScreen(
-                            items = vm.items,
-                            onOpen = { nav.navigate("details/${it.id}") },
+                            items = items,
+                            onOpen = { r -> nav.navigate("details/${r.id}") },
                             onAdd = { nav.navigate("addEdit/0") },
                             onAbout = { nav.navigate("about") }
                         )
                     }
 
                     composable("about") {
-                        AboutScreen(
-                            onBack = { nav.popBackStack() }
-                        )
+                        AboutScreen(onBack = { nav.popBackStack() })
                     }
 
                     composable(
-                        "details/{id}",
-                        arguments = listOf(navArgument("id"){ type = NavType.LongType })
+                        route = "details/{id}",
+                        arguments = listOf(navArgument("id") { type = NavType.LongType })
                     ) { backStackEntry ->
                         val id = backStackEntry.arguments!!.getLong("id")
-                        val r by remember { derivedStateOf { vm.byId(id) } }
+                        val r = items.firstOrNull { it.id == id }
 
-                        if (r == null) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator()
-                            }
-                        } else {
+                        if (r != null) {
                             DetailsScreen(
-                                r = r!!,
-                                onBack = {
-                                    nav.navigate("home") {
-                                        popUpTo("home") { inclusive = true }
-                                    }
-                                },
-                                onMap = { openMap(this@MainActivity, r!!, nav = false) },
-                                onDirections = { openMap(this@MainActivity, r!!, nav = true) },
-                                onShare = { shareRestaurant(this@MainActivity, r!!) },
-                                onEdit = { nav.navigate("addEdit/${r!!.id}") },
+                                r = r,
+                                onBack = { nav.popBackStack() },
+                                onMap = { openMap(this@MainActivity, r, nav = false) },
+                                onDirections = { openMap(this@MainActivity, r, nav = true) },
+                                onShare = { shareRestaurant(this@MainActivity, r) },
+                                onEdit = { nav.navigate("addEdit/${r.id}") },
                                 onDelete = {
-                                    val restaurantId = r!!.id
-                                    vm.remove(restaurantId)
-                                    nav.navigate("home") {
-                                        popUpTo("home") { inclusive = true }
-                                    }
+                                    vm.remove(r)
+                                    nav.popBackStack()
                                 }
                             )
                         }
                     }
 
                     composable(
-                        "addEdit/{id}",
-                        arguments = listOf(navArgument("id"){ type = NavType.LongType })
-                    ) {
-                        val id = it.arguments!!.getLong("id")
-                        val existing = vm.items.find { it.id == id }
+                        route = "addEdit/{id}",
+                        arguments = listOf(navArgument("id") { type = NavType.LongType })
+                    ) { backStackEntry ->
+                        val id = backStackEntry.arguments!!.getLong("id")
+                        val existing = items.firstOrNull { it.id == id }
+
                         AddEditScreen(
                             initial = existing,
                             onBack = { nav.popBackStack() },
                             onSave = { saved ->
-                                val finalRestaurant = if (saved.id == 0L) {
-                                    saved.copy(id = System.currentTimeMillis())
-                                } else {
-                                    saved
-                                }
-                                vm.addOrUpdate(finalRestaurant)
+                                // New restaurant -> id = 0 so Room auto-generates
+                                val toSave =
+                                    if (id == 0L) saved.copy(id = 0L) else saved.copy(id = id)
+                                vm.addOrUpdate(toSave)
                                 nav.popBackStack()
                             }
                         )
                     }
 
                     composable(
-                        "map/{id}",
-                        arguments = listOf(navArgument("id"){ type = NavType.LongType })
+                        route = "map/{id}",
+                        arguments = listOf(navArgument("id") { type = NavType.LongType })
                     ) { backStackEntry ->
                         val id = backStackEntry.arguments!!.getLong("id")
-                        val r by remember { derivedStateOf { vm.byId(id) } }
+                        val r = items.firstOrNull { it.id == id }
 
-                        if (r == null) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator()
-                            }
-                        } else {
+                        if (r != null) {
                             MapScreen(
-                                r = r!!,
-                                onBack = {
-                                    nav.navigate("home") {
-                                        popUpTo("home") { inclusive = true }
-                                    }
-                                },
-                                onOpenMaps = { openMap(this@MainActivity, r!!, nav = false) },
-                                onDirections = { openMap(this@MainActivity, r!!, nav = true) }
+                                r = r,
+                                onBack = { nav.popBackStack() },
+                                onOpenMaps = { openMap(this@MainActivity, r, nav = false) },
+                                onDirections = { openMap(this@MainActivity, r, nav = true) }
                             )
                         }
                     }
@@ -258,15 +144,53 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ==================== SPLASH SCREEN ====================
-/**
- * Splash screen with auto-navigation
- * @author Mehrad Bayat
- */
+// =====================================================
+// VALIDATION HELPERS
+// =====================================================
+private fun isValidPhone(phone: String): Boolean {
+    val cleaned = phone.replace(Regex("[^0-9]"), "")
+    return cleaned.length in 10..11
+}
+
+private fun isValidLatitude(lat: Double): Boolean = lat in -90.0..90.0
+private fun isValidLongitude(lng: Double): Boolean = lng in -180.0..180.0
+
+// =====================================================
+// ANDROID INTENTS (Share + Maps)
+// =====================================================
+private fun shareRestaurant(ctx: ComponentActivity, r: Restaurant) {
+    val text = """
+        ${r.name}
+        ${"★".repeat(r.rating)} | Tags: ${r.tags}
+        ${r.address} | ${r.phone}
+        https://maps.google.com/?q=${Uri.encode(r.name)}@${r.lat},${r.lng}
+    """.trimIndent()
+    ctx.startActivity(
+        Intent.createChooser(
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+            },
+            "Share restaurant"
+        )
+    )
+}
+
+private fun openMap(ctx: ComponentActivity, r: Restaurant, nav: Boolean) {
+    val uri = if (nav)
+        "google.navigation:q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
+    else
+        "geo:${r.lat},${r.lng}?q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
+    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+}
+
+// =====================================================
+// SPLASH SCREEN
+// =====================================================
 @Composable
 fun SplashScreen(onDone: () -> Unit) {
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(1500)
+        delay(1500)
         onDone()
     }
     Box(
@@ -277,10 +201,7 @@ fun SplashScreen(onDone: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                "🍽️",
-                style = MaterialTheme.typography.displayLarge
-            )
+            Text("🍽️", style = MaterialTheme.typography.displayLarge)
             Text(
                 "Personal Restaurant Guide",
                 style = MaterialTheme.typography.headlineSmall,
@@ -291,11 +212,9 @@ fun SplashScreen(onDone: () -> Unit) {
     }
 }
 
-// ==================== HOME SCREEN ====================
-/**
- * Main home screen with restaurant list and search
- * @author Mehrad Bayat
- */
+// =====================================================
+// HOME SCREEN
+// =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -308,116 +227,88 @@ fun HomeScreen(
 
     val filtered = remember(items, query) {
         if (query.isBlank()) items
-        else items.filter {
+        else {
             val s = query.trim().lowercase()
-            it.name.lowercase().contains(s) ||
-                    it.tags.lowercase().contains(s) ||
-                    it.address.lowercase().contains(s)
+            items.filter {
+                it.name.lowercase().contains(s) ||
+                        it.tags.lowercase().contains(s) ||
+                        it.address.lowercase().contains(s)
+            }
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Restaurants (${items.size})") },
+                title = { Text("Restaurants") },
                 actions = {
-                    TextButton(onClick = onAbout) { Text("About") }
+                    TextButton(onClick = onAbout) {
+                        Text("About")
+                    }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAdd) {
-                Text("+", style = MaterialTheme.typography.headlineMedium)
+            FloatingActionButton(
+                onClick = onAdd,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(Icons.Default.Add, "Add")
             }
         }
     ) { paddingValues ->
-        Column(Modifier.padding(paddingValues)) {
+
+        Column(
+            modifier = Modifier
+                .padding(paddingValues)
+                .padding(16.dp)
+        ) {
+
+            // Search bar
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("Search by name, tag, or address") },
+                placeholder = { Text("Search restaurants…") },
                 singleLine = true,
+                leadingIcon = {
+                    Icon(Icons.Default.Search, "Search")
+                },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            Icon(Icons.Default.Close, "Clear")
                         }
                     }
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp)
+                modifier = Modifier.fillMaxWidth()
             )
 
-            if (filtered.isEmpty() && query.isNotBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "🔍",
-                            style = MaterialTheme.typography.displayMedium
-                        )
-                        Text(
-                            "No restaurants found",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "Try a different search term",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            Spacer(Modifier.height(16.dp))
+
+            // CONTENT LOGIC
+            when {
+                items.isEmpty() -> {
+                    EmptyState(
+                        emoji = "🍽️",
+                        title = "No restaurants yet",
+                        subtitle = "Tap + to add your first restaurant"
+                    )
                 }
-            } else if (items.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text(
-                            "🍽️",
-                            style = MaterialTheme.typography.displayLarge
-                        )
-                        Text(
-                            "No restaurants yet",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Tap the + button to add your first restaurant",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+
+                filtered.isEmpty() -> {
+                    EmptyState(
+                        emoji = "🔍",
+                        title = "No matches found",
+                        subtitle = "Try a different search term"
+                    )
                 }
-            } else {
-                LazyColumn {
-                    items(filtered, key = { it.id }) { restaurant ->
-                        ListItem(
-                            headlineContent = {
-                                Text(restaurant.name, fontWeight = FontWeight.SemiBold)
-                            },
-                            supportingContent = {
-                                Text("${restaurant.tags} · ${"★".repeat(restaurant.rating)}")
-                            },
-                            overlineContent = { Text(restaurant.address) },
-                            modifier = Modifier.clickable { onOpen(restaurant) }
-                        )
-                        HorizontalDivider()
+
+                else -> {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(filtered, key = { it.id }) { restaurant ->
+                            RestaurantCard(restaurant, onOpen)
+                        }
                     }
                 }
             }
@@ -425,11 +316,105 @@ fun HomeScreen(
     }
 }
 
-// ==================== DETAILS SCREEN ====================
-/**
- * Restaurant details screen with actions
- * @author Mehrad Bayat, Jerry-Lee Somera
- */
+
+@Composable
+fun RestaurantCard(r: Restaurant, onOpen: (Restaurant) -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen(r) },
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(6.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+
+            Text(
+                r.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                r.address,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                "⭐ ${r.rating}  •  ${r.tags}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+
+@Composable
+fun EmptyState(
+    emoji: String,
+    title: String,
+    subtitle: String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            emoji,
+            style = MaterialTheme.typography.displayMedium
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(Modifier.height(6.dp))
+
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+fun NoResults() {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(top = 80.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("🔎", style = MaterialTheme.typography.displayLarge)
+        Spacer(Modifier.height(12.dp))
+        Text("No restaurants found", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Try a different search",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+
+// =====================================================
+// DETAILS SCREEN
+// =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailsScreen(
@@ -459,10 +444,10 @@ fun DetailsScreen(
                 }
             )
         }
-    ) { p ->
+    ) { padding ->
         Column(
             Modifier
-                .padding(p)
+                .padding(padding)
                 .padding(16.dp)
                 .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -487,15 +472,23 @@ fun DetailsScreen(
                 }
             }
 
-            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     DetailRow("📍 Address", r.address)
                     DetailRow("📞 Phone", r.phone)
                     DetailRow("🏷️ Tags", r.tags)
                     if (r.description.isNotBlank()) {
                         DetailRow("📝 Description", r.description)
                     }
-                    DetailRow("🗺️ Coordinates", "${String.format("%.4f", r.lat)}, ${String.format("%.4f", r.lng)}")
+                    DetailRow(
+                        "🗺️ Coordinates",
+                        "${String.format("%.4f", r.lat)}, ${String.format("%.4f", r.lng)}"
+                    )
                 }
             }
 
@@ -509,28 +502,20 @@ fun DetailsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = onMap,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Map") }
-                Button(
-                    onClick = onDirections,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Directions") }
+                Button(onClick = onMap, modifier = Modifier.weight(1f)) { Text("Map") }
+                Button(onClick = onDirections, modifier = Modifier.weight(1f)) { Text("Directions") }
             }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
-                    onClick = onShare,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Share") }
-                FilledTonalButton(
-                    onClick = onEdit,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Edit") }
+                OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
+                    Text("Share")
+                }
+                FilledTonalButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
+                    Text("Edit")
+                }
             }
         }
     }
@@ -560,10 +545,6 @@ fun DetailsScreen(
     }
 }
 
-/**
- * Helper composable for displaying detail rows
- * @author Mehrad Bayat
- */
 @Composable
 fun DetailRow(label: String, value: String) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -572,18 +553,13 @@ fun DetailRow(label: String, value: String) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text(
-            value,
-            style = MaterialTheme.typography.bodyLarge
-        )
+        Text(value, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
-// ==================== ADD/EDIT SCREEN ====================
-/**
- * Form screen for creating and editing restaurants
- * @author Kevin George Buhain
- */
+// =====================================================
+// ADD / EDIT SCREEN
+// =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditScreen(
@@ -617,10 +593,10 @@ fun AddEditScreen(
                 }
             )
         }
-    ) { p ->
+    ) { padding ->
         LazyColumn(
             Modifier
-                .padding(p)
+                .padding(padding)
                 .padding(16.dp)
                 .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -635,9 +611,7 @@ fun AddEditScreen(
                     label = { Text("Restaurant Name *") },
                     singleLine = true,
                     isError = nameError,
-                    supportingText = {
-                        if (nameError) Text("Name is required")
-                    },
+                    supportingText = { if (nameError) Text("Name is required") },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -651,9 +625,7 @@ fun AddEditScreen(
                     },
                     label = { Text("Address *") },
                     isError = addressError,
-                    supportingText = {
-                        if (addressError) Text("Address is required")
-                    },
+                    supportingText = { if (addressError) Text("Address is required") },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -733,28 +705,24 @@ fun AddEditScreen(
                         value = lat,
                         onValueChange = {
                             lat = it
-                            val latValue = it.toDoubleOrNull()
-                            latError = latValue == null || !isValidLatitude(latValue)
+                            val v = it.toDoubleOrNull()
+                            latError = v == null || !isValidLatitude(v)
                         },
                         label = { Text("Latitude") },
                         isError = latError,
-                        supportingText = {
-                            if (latError) Text("Must be between -90 and 90")
-                        },
+                        supportingText = { if (latError) Text("Must be between -90 and 90") },
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = lng,
                         onValueChange = {
                             lng = it
-                            val lngValue = it.toDoubleOrNull()
-                            lngError = lngValue == null || !isValidLongitude(lngValue)
+                            val v = it.toDoubleOrNull()
+                            lngError = v == null || !isValidLongitude(v)
                         },
                         label = { Text("Longitude") },
                         isError = lngError,
-                        supportingText = {
-                            if (lngError) Text("Must be between -180 and 180")
-                        },
+                        supportingText = { if (lngError) Text("Must be between -180 and 180") },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -773,7 +741,8 @@ fun AddEditScreen(
                             !latError &&
                             !lngError &&
                             isValidLatitude(latValue) &&
-                            isValidLongitude(lngValue)) {
+                            isValidLongitude(lngValue)
+                        ) {
                             onSave(
                                 Restaurant(
                                     id = initial?.id ?: 0L,
@@ -806,11 +775,11 @@ fun AddEditScreen(
     }
 }
 
-// ==================== ABOUT SCREEN ====================
-/**
- * About screen with app information
- * @author Kevin George Buhain
- */
+
+
+// =====================================================
+// ABOUT SCREEN
+// =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
@@ -825,18 +794,15 @@ fun AboutScreen(onBack: () -> Unit) {
                 }
             )
         }
-    ) { p ->
+    ) { padding ->
         Column(
             Modifier
-                .padding(p)
+                .padding(padding)
                 .padding(24.dp)
                 .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                "🍽️",
-                style = MaterialTheme.typography.displayMedium
-            )
+            Text("🍽️", style = MaterialTheme.typography.displayMedium)
             Text(
                 "Personal Restaurant Guide",
                 style = MaterialTheme.typography.headlineMedium,
@@ -882,11 +848,9 @@ fun AboutScreen(onBack: () -> Unit) {
     }
 }
 
-// ==================== MAP SCREEN ====================
-/**
- * Map screen showing restaurant coordinates
- * @author Jerry-Lee Somera
- */
+// =====================================================
+// MAP SCREEN
+// =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapScreen(
@@ -906,10 +870,10 @@ fun MapScreen(
                 }
             )
         }
-    ) { p ->
+    ) { padding ->
         Column(
             Modifier
-                .padding(p)
+                .padding(padding)
                 .fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -927,10 +891,7 @@ fun MapScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            "🗺️",
-                            style = MaterialTheme.typography.displayMedium
-                        )
+                        Text("🗺️", style = MaterialTheme.typography.displayMedium)
                         Text(
                             "Map View",
                             style = MaterialTheme.typography.titleLarge,
@@ -956,14 +917,12 @@ fun MapScreen(
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Button(
-                    onClick = onOpenMaps,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Open in Maps") }
-                Button(
-                    onClick = onDirections,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Get Directions") }
+                Button(onClick = onOpenMaps, modifier = Modifier.weight(1f)) {
+                    Text("Open in Maps")
+                }
+                Button(onClick = onDirections, modifier = Modifier.weight(1f)) {
+                    Text("Get Directions")
+                }
             }
         }
     }
