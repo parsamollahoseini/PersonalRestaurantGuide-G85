@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             AppDatabase::class.java,
             "restaurants.db"
-        ).build()
+        ).fallbackToDestructiveMigration().build()
         val vm = RestaurantVm(db.restaurantDao())
 
         setContent {
@@ -91,7 +91,7 @@ class MainActivity : ComponentActivity() {
                                 r = r,
                                 onBack = { nav.popBackStack() },
                                 onMap = { openMap(this@MainActivity, r, nav = false) },
-                                onDirections = { openMap(this@MainActivity, r, nav = true) },
+                                onDirections = { origin -> openMap(this@MainActivity, r, nav = true, origin = origin) },
                                 onShare = { shareRestaurant(this@MainActivity, r) },
                                 onEdit = { nav.navigate("addEdit/${r.id}") },
                                 onDelete = {
@@ -121,23 +121,6 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
-
-                    composable(
-                        route = "map/{id}",
-                        arguments = listOf(navArgument("id") { type = NavType.LongType })
-                    ) { backStackEntry ->
-                        val id = backStackEntry.arguments!!.getLong("id")
-                        val r = items.firstOrNull { it.id == id }
-
-                        if (r != null) {
-                            MapScreen(
-                                r = r,
-                                onBack = { nav.popBackStack() },
-                                onOpenMaps = { openMap(this@MainActivity, r, nav = false) },
-                                onDirections = { openMap(this@MainActivity, r, nav = true) }
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -152,36 +135,50 @@ private fun isValidPhone(phone: String): Boolean {
     return cleaned.length in 10..11
 }
 
-private fun isValidLatitude(lat: Double): Boolean = lat in -90.0..90.0
-private fun isValidLongitude(lng: Double): Boolean = lng in -180.0..180.0
-
 // =====================================================
 // ANDROID INTENTS (Share + Maps)
 // =====================================================
 private fun shareRestaurant(ctx: ComponentActivity, r: Restaurant) {
-    val text = """
-        ${r.name}
-        ${"★".repeat(r.rating)} | Tags: ${r.tags}
-        ${r.address} | ${r.phone}
-        https://maps.google.com/?q=${Uri.encode(r.name)}@${r.lat},${r.lng}
-    """.trimIndent()
-    ctx.startActivity(
-        Intent.createChooser(
+    try {
+        val text = """
+            ${r.name}
+            ${"★".repeat(r.rating)} | Tags: ${r.tags}
+            ${r.address} | ${r.phone}
+            https://www.google.com/maps/search/?api=1&query=${Uri.encode(r.address)}
+        """.trimIndent()
+        val intent = Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, text)
             },
             "Share restaurant"
         )
-    )
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
 }
 
-private fun openMap(ctx: ComponentActivity, r: Restaurant, nav: Boolean) {
-    val uri = if (nav)
-        "google.navigation:q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
-    else
-        "geo:${r.lat},${r.lng}?q=${r.lat},${r.lng}(${Uri.encode(r.name)})"
-    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+private fun openMap(ctx: ComponentActivity, r: Restaurant, nav: Boolean, origin: String = "") {
+    try {
+        val encodedAddress = Uri.encode(r.address)
+        val uri = if (nav) {
+            if (origin.isNotBlank()) {
+                val encodedOrigin = Uri.encode(origin)
+                "https://www.google.com/maps/dir/?api=1&origin=$encodedOrigin&destination=$encodedAddress"
+            } else {
+                "https://www.google.com/maps/dir/?api=1&destination=$encodedAddress"
+            }
+        } else {
+            "https://www.google.com/maps/search/?api=1&query=$encodedAddress"
+        }
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
 }
 
 // =====================================================
@@ -421,12 +418,14 @@ fun DetailsScreen(
     r: Restaurant,
     onBack: () -> Unit,
     onMap: () -> Unit,
-    onDirections: () -> Unit,
+    onDirections: (String) -> Unit,
     onShare: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showDirectionsDialog by remember { mutableStateOf(false) }
+    var startingLocation by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -485,10 +484,6 @@ fun DetailsScreen(
                     if (r.description.isNotBlank()) {
                         DetailRow("📝 Description", r.description)
                     }
-                    DetailRow(
-                        "🗺️ Coordinates",
-                        "${String.format("%.4f", r.lat)}, ${String.format("%.4f", r.lng)}"
-                    )
                 }
             }
 
@@ -503,7 +498,7 @@ fun DetailsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(onClick = onMap, modifier = Modifier.weight(1f)) { Text("Map") }
-                Button(onClick = onDirections, modifier = Modifier.weight(1f)) { Text("Directions") }
+                Button(onClick = { showDirectionsDialog = true }, modifier = Modifier.weight(1f)) { Text("Directions") }
             }
 
             Row(
@@ -543,6 +538,44 @@ fun DetailsScreen(
             }
         )
     }
+
+    if (showDirectionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showDirectionsDialog = false },
+            title = { Text("Get Directions") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter your starting location (optional):")
+                    OutlinedTextField(
+                        value = startingLocation,
+                        onValueChange = { startingLocation = it },
+                        placeholder = { Text("e.g., 123 Main St, Toronto") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Leave blank to use your current location",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDirectionsDialog = false
+                        onDirections(startingLocation)
+                        startingLocation = ""
+                    }
+                ) { Text("Get Directions") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDirectionsDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -573,14 +606,10 @@ fun AddEditScreen(
     var desc by remember { mutableStateOf(initial?.description ?: "") }
     var tags by remember { mutableStateOf(initial?.tags ?: "") }
     var rating by remember { mutableStateOf(initial?.rating ?: 0) }
-    var lat by remember { mutableStateOf(initial?.lat?.toString() ?: "43.65") }
-    var lng by remember { mutableStateOf(initial?.lng?.toString() ?: "-79.38") }
 
     var nameError by remember { mutableStateOf(false) }
     var addressError by remember { mutableStateOf(false) }
     var phoneError by remember { mutableStateOf(false) }
-    var latError by remember { mutableStateOf(false) }
-    var lngError by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -692,56 +721,12 @@ fun AddEditScreen(
             }
 
             item {
-                Text(
-                    "Location Coordinates",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = lat,
-                        onValueChange = {
-                            lat = it
-                            val v = it.toDoubleOrNull()
-                            latError = v == null || !isValidLatitude(v)
-                        },
-                        label = { Text("Latitude") },
-                        isError = latError,
-                        supportingText = { if (latError) Text("Must be between -90 and 90") },
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = lng,
-                        onValueChange = {
-                            lng = it
-                            val v = it.toDoubleOrNull()
-                            lngError = v == null || !isValidLongitude(v)
-                        },
-                        label = { Text("Longitude") },
-                        isError = lngError,
-                        supportingText = { if (lngError) Text("Must be between -180 and 180") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            item {
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
-                        val latValue = lat.toDoubleOrNull() ?: 0.0
-                        val lngValue = lng.toDoubleOrNull() ?: 0.0
-
                         if (name.isNotBlank() &&
                             address.isNotBlank() &&
-                            !phoneError &&
-                            !latError &&
-                            !lngError &&
-                            isValidLatitude(latValue) &&
-                            isValidLongitude(lngValue)
+                            !phoneError
                         ) {
                             onSave(
                                 Restaurant(
@@ -751,9 +736,7 @@ fun AddEditScreen(
                                     phone = phone.trim(),
                                     description = desc.trim(),
                                     tags = tags.trim().lowercase(),
-                                    rating = rating,
-                                    lat = latValue,
-                                    lng = lngValue
+                                    rating = rating
                                 )
                             )
                         } else {
@@ -763,9 +746,7 @@ fun AddEditScreen(
                     },
                     enabled = name.isNotBlank() &&
                             address.isNotBlank() &&
-                            !phoneError &&
-                            !latError &&
-                            !lngError,
+                            !phoneError,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(if (initial == null) "Add Restaurant" else "Save Changes")
@@ -848,82 +829,3 @@ fun AboutScreen(onBack: () -> Unit) {
     }
 }
 
-// =====================================================
-// MAP SCREEN
-// =====================================================
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MapScreen(
-    r: Restaurant,
-    onBack: () -> Unit,
-    onOpenMaps: () -> Unit,
-    onDirections: () -> Unit
-) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Map – ${r.name}") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.height(24.dp))
-            Surface(
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(horizontal = 16.dp),
-                tonalElevation = 4.dp,
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text("🗺️", style = MaterialTheme.typography.displayMedium)
-                        Text(
-                            "Map View",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Lat: ${String.format("%.4f", r.lat)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "Lng: ${String.format("%.4f", r.lng)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(onClick = onOpenMaps, modifier = Modifier.weight(1f)) {
-                    Text("Open in Maps")
-                }
-                Button(onClick = onDirections, modifier = Modifier.weight(1f)) {
-                    Text("Get Directions")
-                }
-            }
-        }
-    }
-}

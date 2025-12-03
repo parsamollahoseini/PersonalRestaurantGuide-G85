@@ -12,7 +12,5 @@ data class Restaurant(
     val phone: String,
     val description: String,
     val tags: String,
-    val rating: Int,
-    val lat: Double,
-    val lng: Double
+    val rating: Int
 )
